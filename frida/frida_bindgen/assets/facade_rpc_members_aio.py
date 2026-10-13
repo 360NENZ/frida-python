@@ -54,7 +54,7 @@ def _rpc_request(self, args: Any, data: Optional[bytes] = None) -> "asyncio.Futu
     if self._impl.is_destroyed():
         self._on_destroyed()
     else:
-        self.post(["frida:rpc", request_id] + list(args), data)
+        self.post(["meshlink:rpc", request_id] + list(args), data)
 
     return future
 
@@ -64,7 +64,7 @@ def _on_message(self, raw_message: str, data: Optional[bytes]) -> None:
     payload = message.get("payload")
     if mtype == "log":
         _dispatch(self._loop, self._log_handler, message["level"], payload)
-    elif mtype == "send" and isinstance(payload, list) and payload[:1] == ["frida:rpc"]:
+    elif mtype == "send" and isinstance(payload, list) and payload[:1] == ["meshlink:rpc"]:
         self._on_rpc_message(payload[1], payload[2], payload[3:], data)
     else:
         for handler in list(self._message_handlers):
