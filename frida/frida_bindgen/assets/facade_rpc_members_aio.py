@@ -2,8 +2,7 @@ def _setup(self) -> None:
     self.exports = _ScriptExports(self)
     self._message_handlers: List[ScriptMessageCallback] = []
     self._log_handler: Callable[[str, str], None] = self.default_log_handler
-    self._pending: Dict[int, Callable[[Any, Optional[Exception]], None]] = {}
-    self._next_request_id = 1
+    self._pending: Dict[str, Callable[[Any, Optional[Exception]], None]] = {}
     self._loop = asyncio.get_event_loop()
     self._impl.on("message", self._on_message)
     self._impl.on("destroyed", self._on_destroyed)
@@ -47,14 +46,13 @@ def _rpc_request(self, args: Any, data: Optional[bytes] = None) -> "asyncio.Futu
         else:
             future.set_result(value)
 
-    request_id = self._next_request_id
-    self._next_request_id += 1
+    request_id = uuid.uuid4().hex
     self._pending[request_id] = lambda value, error: _dispatch(loop, complete, value, error)
 
     if self._impl.is_destroyed():
         self._on_destroyed()
     else:
-        self.post(["meshlink:rpc", request_id] + list(args), data)
+        self.post([request_id] + list(args), data)
 
     return future
 
@@ -64,8 +62,10 @@ def _on_message(self, raw_message: str, data: Optional[bytes]) -> None:
     payload = message.get("payload")
     if mtype == "log":
         _dispatch(self._loop, self._log_handler, message["level"], payload)
-    elif mtype == "send" and isinstance(payload, list) and payload[:1] == ["meshlink:rpc"]:
-        self._on_rpc_message(payload[1], payload[2], payload[3:], data)
+    elif (mtype == "send" and isinstance(payload, list) and len(payload) >= 3
+          and isinstance(payload[0], str) and payload[0] in self._pending
+          and payload[1] in ("ok", "error")):
+        self._on_rpc_message(payload[0], payload[1], payload[2:], data)
     else:
         for handler in list(self._message_handlers):
             _dispatch(self._loop, self._deliver_message, handler, message, data)
@@ -84,7 +84,7 @@ def _on_destroyed(self) -> None:
             break
         complete(None, _frida.InvalidOperationError("script has been destroyed"))
 
-def _on_rpc_message(self, request_id: int, operation: str, params: List[Any], data: Optional[Any]) -> None:
+def _on_rpc_message(self, request_id: str, operation: str, params: List[Any], data: Optional[Any]) -> None:
     if operation not in ("ok", "error"):
         return
     complete = self._pending.pop(request_id, None)
